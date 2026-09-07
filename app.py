@@ -8,7 +8,7 @@ st.set_page_config(page_title="Fake News Detector", page_icon="🛡️", layout=
 # 1. Load the trained model safely
 @st.cache_resource  # Caches the model so it doesn't reload on every click
 def load_model():
-    model_path = "model(1).pkl"
+    model_path = "model (1).pkl"
     if os.path.exists(model_path):
         return joblib.load(model_path)
     else:
