@@ -1,52 +1,46 @@
 import streamlit as st
 import joblib
-import os
+import re
 
-# Set up page configuration
-st.set_page_config(page_title="Fake News Detector", page_icon="🛡️", layout="centered")
+# Set page layout
+st.set_page_config(page_title="Fake News Detector", page_icon="📰", layout="centered")
 
-# 1. Load the trained model safely
-@st.cache_resource  # Caches the model so it doesn't reload on every click
-def load_model():
-    model_path = "model (1).pkl"
-    if os.path.exists(model_path):
-        return joblib.load(model_path)
-    else:
-        st.error(f"Error: '{model_path}' not found in the repository. Please check your filenames!")
-        return None
+# Cache model loading so it only loads once into memory
+@st.cache_resource
+def load_assets():
+    vectorizer = joblib.load('tfidf_vectorizer.pkl')
+    model = joblib.load('model (1).pkl')
+    return vectorizer, model
 
-model = load_model()
+vectorizer, model = load_assets()
 
-# 2. User Interface
-st.title("🛡️ Fake News Detection System")
-st.write("Paste a news headline or article body below to verify its authenticity using machine learning.")
+# Cleaning function matching the training phase
+def clean_text(text):
+    text = re.sub(r'^.*?\(Reuters\)\s*-\s*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'^.*?[A-Z]{2,}\s*\(AP\)\s*-\s*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
+    text = re.sub(r'<.*?>', '', text)
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    return text.lower().strip()
 
-# Text area for user input
-user_input = st.text_area("News Content", placeholder="Type or paste your news text here...", height=200)
+# App UI
+st.title("📰 Fake News Detector")
+st.write("Enter an article or headline below to assess its credibility.")
 
-# 3. Prediction Logic
+user_input = st.text_area("News Text", height=200, placeholder="Paste news article content here...")
+
 if st.button("Analyze News"):
     if not user_input.strip():
         st.warning("Please enter some text before analyzing.")
-    elif model is None:
-        st.error("Model is not loaded properly.")
     else:
-        with st.spinner("Analyzing text..."):
-            try:
-                # Pass the text to your model
-                # (Wraps input in a list because ML models expect a batch/array of inputs)
-                prediction = model.predict([user_input])[0]
-                
-                st.write("---")
-                st.subheader("Analysis Result:")
-                
-                # Customizing display based on common model outputs (0 or 1 / Real or Fake)
-                # Adjust these labels if your model uses 0 for Fake and 1 for Real!
-                if str(prediction).lower() in ['fake', '1', 1]:
-                    st.error("🚨 **Warning:** This news text is highly likely to be **FAKE**.")
-                else:
-                    st.success("✅ **Verified:** This news text appears to be **REAL**.")
-                    
-            except Exception as e:
-                st.error(f"An error occurred during prediction: {e}")
-                st.info("Tip: If your model requires a separate TF-IDF Vectorizer/Tokenizer, make sure it's loaded and applied in the script.")
+        cleaned = clean_text(user_input)
+        vec_input = vectorizer.transform([cleaned])
+        
+        prediction = model.predict(vec_input)[0]
+        proba = model.predict_proba(vec_input)[0]
+
+        st.divider()
+        if prediction == 1:
+            st.error(f"🚨 **Verdict: Likely FAKE News** ({proba[1]*100:.1f}% confidence)")
+        else:
+            st.success(f"✅ **Verdict: Likely REAL News** ({proba[0]*100:.1f}% confidence)")
