@@ -1,26 +1,12 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import re
-import io
 import unicodedata
 import joblib
-import os
-from pathlib import Path
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
-from reportlab.lib import colors as rl_colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
 
 try:
     from duckduckgo_search import DDGS
@@ -206,140 +192,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-_PDF_NAVY = rl_colors.HexColor("#0F172A")
-_PDF_SLATE = rl_colors.HexColor("#475569")
-_PDF_LIGHT_BG = rl_colors.HexColor("#F2F5F7")
-_PDF_BORDER = rl_colors.HexColor("#E2E8F0")
-_PDF_FAKE_RED = rl_colors.HexColor("#DC2626")
-_PDF_REAL_GREEN = rl_colors.HexColor("#0F9E8E")
-_PDF_WARN_AMBER = rl_colors.HexColor("#B45309")
-
-_PDF_EMOJI_PATTERN = re.compile(
-    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\U0001F900-\U0001F9FF\U0000FE00-\U0000FE0F]+",
-    flags=re.UNICODE
-)
-
-def _pdf_strip_emoji(text):
-    return _PDF_EMOJI_PATTERN.sub('', str(text)).strip()
-
-def _pdf_verdict_color(verdict_str):
-    v = str(verdict_str)
-    if "UNVERIFIED" in v:
-        return _PDF_WARN_AMBER
-    if "REAL" in v or "VERIFIED" in v:
-        return _PDF_REAL_GREEN
-    if "FAKE" in v or "DEBUNKED" in v:
-        return _PDF_FAKE_RED
-    return _PDF_WARN_AMBER
-
-def _pdf_header_footer(canvas, doc):
-    canvas.saveState()
-    canvas.setFillColor(_PDF_NAVY)
-    canvas.rect(0, doc.pagesize[1] - 0.75 * inch, doc.pagesize[0], 0.75 * inch, fill=1, stroke=0)
-    canvas.setFillColor(rl_colors.white)
-    canvas.setFont("Helvetica-Bold", 14)
-    canvas.drawString(0.6 * inch, doc.pagesize[1] - 0.5 * inch, "VeriFact AI")
-    canvas.setFont("Helvetica", 9)
-    canvas.setFillColor(rl_colors.HexColor("#CBD5E1"))
-    canvas.drawString(0.6 * inch, doc.pagesize[1] - 0.65 * inch, "Verification Audit Log")
-    canvas.setFont("Helvetica", 8)
-    canvas.setFillColor(_PDF_SLATE)
-    canvas.drawString(0.6 * inch, 0.4 * inch, f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}")
-    canvas.drawRightString(doc.pagesize[0] - 0.6 * inch, 0.4 * inch, f"Page {doc.page}")
-    canvas.restoreState()
-
-def generate_verification_log_pdf(history):
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=letter,
-        topMargin=1.1 * inch, bottomMargin=0.7 * inch,
-        leftMargin=0.6 * inch, rightMargin=0.6 * inch,
-        title="VeriFact AI Verification Audit Log"
-    )
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleBig', parent=styles['Heading1'], fontSize=18, textColor=_PDF_NAVY, spaceAfter=4)
-    subtitle_style = ParagraphStyle('Subtitle', parent=styles['Normal'], fontSize=10, textColor=_PDF_SLATE, spaceAfter=14)
-    section_style = ParagraphStyle('Section', parent=styles['Heading2'], fontSize=12, textColor=_PDF_NAVY, spaceBefore=10, spaceAfter=6)
-    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, textColor=_PDF_NAVY, leading=10)
-    header_cell_style = ParagraphStyle('HeaderCell', parent=styles['Normal'], fontSize=8, textColor=rl_colors.white, leading=10, fontName='Helvetica-Bold')
-    summary_label_style = ParagraphStyle('SummaryLabel', parent=styles['Normal'], fontSize=9, textColor=rl_colors.white, alignment=1, fontName='Helvetica-Bold')
-    summary_value_style = ParagraphStyle('SummaryValue', parent=styles['Normal'], fontSize=16, textColor=_PDF_NAVY, alignment=1, fontName='Helvetica-Bold')
-    disclaimer_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], fontSize=8, textColor=_PDF_SLATE, leading=11)
-
-    elements = []
-    elements.append(Paragraph("Verification Audit Log", title_style))
-    elements.append(Paragraph(f"{len(history)} checks recorded this session", subtitle_style))
-
-    n_fake = sum(1 for h in history if _pdf_verdict_color(h.get('verdict', '')) == _PDF_FAKE_RED)
-    n_real = sum(1 for h in history if _pdf_verdict_color(h.get('verdict', '')) == _PDF_REAL_GREEN)
-    n_other = len(history) - n_fake - n_real
-
-    summary_data = [
-        [Paragraph("TOTAL CHECKS", summary_label_style), Paragraph("FLAGGED FAKE", summary_label_style),
-         Paragraph("VERIFIED REAL", summary_label_style), Paragraph("UNVERIFIED / OTHER", summary_label_style)],
-        [Paragraph(str(len(history)), summary_value_style), Paragraph(str(n_fake), summary_value_style),
-         Paragraph(str(n_real), summary_value_style), Paragraph(str(n_other), summary_value_style)]
-    ]
-    summary_table = Table(summary_data, colWidths=[1.7 * inch] * 4)
-    summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), _PDF_NAVY),
-        ('BACKGROUND', (0, 1), (-1, 1), _PDF_LIGHT_BG),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, _PDF_BORDER),
-    ]))
-    elements.append(summary_table)
-    elements.append(Spacer(1, 16))
-    elements.append(Paragraph("Detailed Log", section_style))
-    elements.append(HRFlowable(width="100%", color=_PDF_BORDER, thickness=1))
-    elements.append(Spacer(1, 8))
-
-    table_data = [[
-        Paragraph("TIME", header_cell_style), Paragraph("CLAIM / FILE", header_cell_style),
-        Paragraph("VERDICT", header_cell_style), Paragraph("TRUTH INDEX", header_cell_style),
-        Paragraph("CORROBORATION", header_cell_style)
-    ]]
-    for h in history:
-        verdict_color = _pdf_verdict_color(h.get('verdict', ''))
-        clean_verdict = _pdf_strip_emoji(h.get('verdict', ''))
-        verdict_para = Paragraph(f'<font color="{verdict_color.hexval()}"><b>{clean_verdict}</b></font>', cell_style)
-        table_data.append([
-            Paragraph(str(h.get('timestamp', '')), cell_style),
-            Paragraph(str(h.get('claim', ''))[:70], cell_style),
-            verdict_para,
-            Paragraph(str(h.get('truth_index', '')), cell_style),
-            Paragraph(str(h.get('corroboration', '')), cell_style),
-        ])
-
-    log_table = Table(table_data, colWidths=[0.95 * inch, 2.55 * inch, 2.15 * inch, 0.85 * inch, 1.3 * inch], repeatRows=1)
-    style_cmds = [
-        ('BACKGROUND', (0, 0), (-1, 0), _PDF_NAVY),
-        ('GRID', (0, 0), (-1, -1), 0.5, _PDF_BORDER),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-    ]
-    for i in range(1, len(table_data)):
-        if i % 2 == 0:
-            style_cmds.append(('BACKGROUND', (0, i), (-1, i), _PDF_LIGHT_BG))
-    log_table.setStyle(TableStyle(style_cmds))
-    elements.append(log_table)
-
-    elements.append(Spacer(1, 20))
-    elements.append(HRFlowable(width="100%", color=_PDF_BORDER, thickness=1))
-    elements.append(Spacer(1, 8))
-    elements.append(Paragraph(
-        "<b>Disclaimer:</b> Verdicts in this log are produced by an automated, evidence-based system "
-        "(live news/fact-check search and evidence-based text analysis). "
-        "They are decision support, not a certified fact-check - always verify high-stakes claims "
-        "through a professional fact-checking organization.",
-        disclaimer_style
-    ))
-
-    doc.build(elements, onFirstPage=_pdf_header_footer, onLaterPages=_pdf_header_footer)
-    buf.seek(0)
-    return buf.getvalue()
-
 if 'verification_history' not in st.session_state:
     st.session_state.verification_history = []
 QUERY_STOP_WORDS = {
@@ -497,147 +349,6 @@ def fetch_all_sources(query, lang='English'):
     factcheck = fetch_factcheck_rss(query)
     return general + factcheck
 
-NLI_LABELS = ['contradiction', 'entailment', 'neutral']
-
-@st.cache_resource(show_spinner="Loading local NLI model (one-time)...")
-def get_nli_model():
-    if not HAS_NLI:
-        return None
-    try:
-        return CrossEncoder('cross-encoder/nli-deberta-v3-xsmall')
-    except Exception:
-        return None
-
-def compute_nli_contradiction_score(claim_text, article_snippet):
-    if not article_snippet or not article_snippet.strip():
-        return None
-    model = get_nli_model()
-    if model is None:
-        return None
-    try:
-        logits = model.predict([(article_snippet[:512], claim_text[:300])])
-        row = np.asarray(logits[0], dtype=np.float64)
-        exp = np.exp(row - row.max())
-        probs = exp / exp.sum()
-        contradiction_idx = NLI_LABELS.index('contradiction')
-        return float(probs[contradiction_idx])
-    except Exception:
-        return None
-
-def get_debunk_assessment(claim_text, article):
-    if not article:
-        return False, None, "none"
-    keyword_hit = contains_debunk_signal(article)
-    nli_score = compute_nli_contradiction_score(claim_text, article.get('snippet', ''))
-    if nli_score is not None and nli_score >= 0.55:
-        return True, nli_score, "nli"
-    if keyword_hit:
-        return True, nli_score, "keyword"
-    return False, nli_score, "none"
-
-def extract_main_words(text):
-    stop_words = {
-        'the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'in', 'to', 'for', 'of', 'with',
-        'that', 'this', 'it', 'from', 'by', 'as', 'are', 'was', 'were', 'been', 'be', 'have', 'has',
-        'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might',
-        'must', 'about', 'above', 'below', 'over', 'under', 'again', 'further', 'then', 'once', 'here',
-        'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most',
-        'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-        'just', 'now', 'says', 'said', 'according', 'announced', 'new', 'news', 'breaking'
-    }
-    words = unicode_words(text)
-    main_words = []
-    for w in words:
-        w_lower = w.lower()
-        if w_lower not in stop_words and len(w_lower) >= 2:
-            main_words.append(w_lower)
-    return list(dict.fromkeys(main_words))
-
-DEBUNK_SIGNAL_WORDS = [
-    'false', 'fake', 'hoax', 'debunk', 'debunked', 'myth', 'not true', 'rumor', 'rumour',
-    'clarifies', 'clarification', 'denies', 'denied', 'misleading', 'fact check', 'fact-check',
-    'no truth', 'baseless', 'untrue', 'fabricated', 'busts', 'pib fact'
-]
-
-def contains_debunk_signal(article):
-    if not article:
-        return False
-    combined = (article.get('title', '') + ' ' + article.get('snippet', '')).lower()
-    return any(sig in combined for sig in DEBUNK_SIGNAL_WORDS)
-
-KNOWN_HOAX_PATTERNS = [
-    {'all': ['plastic'], 'any': ['currency', 'notes', 'banknote', 'banknotes'], 'context': ['rbi', 'reserve bank']},
-    {'all': ['whatsapp'], 'any': ['charge', 'paid', 'fee', 'subscription'], 'context': ['whatsapp', 'message']},
-    {'all': ['5g'], 'any': ['virus', 'covid', 'coronavirus'], 'context': ['spread', 'cause', 'link']},
-    {'all': ['2000'], 'any': ['chip', 'gps', 'tracking', 'nano'], 'context': ['note', 'currency']},
-]
-
-def matches_known_hoax(text):
-    lt = text.lower()
-    for pattern in KNOWN_HOAX_PATTERNS:
-        if all(k in lt for k in pattern['all']) and any(k in lt for k in pattern['any']) and any(k in lt for k in pattern['context']):
-            return True
-    return False
-
-def calculate_entity_and_vector_match(claim_text, articles):
-    if not articles:
-        return 0.0, 0.0, None, [], 0
-
-    sentences = [s.strip() for s in re.split(r'[.!?]\s+', claim_text) if len(s.strip()) > 10]
-    if not sentences:
-        sentences = [claim_text]
-
-    max_sim = 0.0
-    max_overlap_ratio = 0.0
-    best_match = articles[0]
-    best_matched_words = []
-    total_main_words_count = 0
-
-    for sentence in sentences:
-        main_words = extract_main_words(sentence)
-        if not main_words:
-            continue
-        
-        total_main_words_count = max(total_main_words_count, len(main_words))
-
-        for article in articles:
-            snippet_text = article['snippet'].lower()
-            matched_words = [w for w in main_words if w in snippet_text]
-            overlap_ratio = len(matched_words) / len(main_words) if main_words else 0.0
-
-            try:
-                vectorizer = TfidfVectorizer(stop_words='english').fit_transform([sentence, article['snippet']])
-                vectors = vectorizer.toarray()
-                sim_score = float(cosine_similarity(vectors[0:1], vectors[1:2])[0][0])
-            except Exception:
-                sim_score = 0.0
-
-            combined_score = (overlap_ratio * 0.7) + (sim_score * 0.3)
-            best_combined = (max_overlap_ratio * 0.7) + (max_sim * 0.3)
-
-            if combined_score > best_combined:
-                max_overlap_ratio = overlap_ratio
-                max_sim = sim_score
-                best_match = article
-                best_matched_words = matched_words
-
-    return float(max_overlap_ratio), float(max_sim), best_match, best_matched_words, total_main_words_count
-
-def analyze_linguistic_risk(text):
-    caps_ratio = sum(1 for c in text if c.isupper()) / max(len(text), 1)
-    excl_count = text.count('!')
-    
-    clickbait_words = ['shocking', 'secret', 'urgent', 'banned', 'leaked', 'viral', 'miracle', 'unbelievable', 'exposed', 'overnight']
-    sensational_hits = sum(1 for word in clickbait_words if word in text.lower())
-    
-    journalistic_phrases = ['official', 'ministry', 'spokesperson', 'according to', 'published', 'statement', 'announced', 'report']
-    journalistic_hits = sum(1 for phrase in journalistic_phrases if phrase in text.lower())
-    
-    sensationalism_score = min(int((sensational_hits * 25) + (caps_ratio * 40) + (excl_count * 10)), 100)
-    journalistic_score = min(int(journalistic_hits * 20), 100)
-    
-    return sensationalism_score, journalistic_score
-
 @st.cache_resource
 def load_trained_model():
     """Load either supported model/vectorizer filename pair."""
@@ -655,18 +366,7 @@ def load_trained_model():
             errors.append(f"{vectorizer_file} + {model_file}: {exc}")
     return None, None, "\n".join(errors)
 
-
 trained_model, trained_vectorizer, model_load_error = load_trained_model()
-
-
-DATASET_DIR = Path("datasets")
-FEVER_LOCAL_FILE = DATASET_DIR / "fever_train.parquet"
-LIAR_LOCAL_FILES = {
-    "train": DATASET_DIR / "liar_train.tsv",
-    "valid": DATASET_DIR / "liar_valid.tsv",
-    "test": DATASET_DIR / "liar_test.tsv",
-}
-
 
 def model_clean_text(text):
     text = str(text)
@@ -677,134 +377,10 @@ def model_clean_text(text):
     text = re.sub(r'[^a-zA-Z\s]', '', text)
     return text.lower().strip()
 
-
-def find_local_file(primary_path, patterns):
-    if primary_path.exists():
-        return primary_path
-    if DATASET_DIR.exists():
-        for pattern in patterns:
-            matches = sorted(DATASET_DIR.glob(pattern))
-            if matches:
-                return matches[0]
-    return None
-
-
-def load_local_training_data():
-    fever_file = find_local_file(
-        FEVER_LOCAL_FILE,
-        ["*fever*.parquet", "*fever*.csv"]
-    )
-    liar_train = find_local_file(LIAR_LOCAL_FILES["train"], ["*liar*train*.tsv"])
-    liar_valid = find_local_file(LIAR_LOCAL_FILES["valid"], ["*liar*valid*.tsv"])
-    liar_test = find_local_file(LIAR_LOCAL_FILES["test"], ["*liar*test*.tsv"])
-
-    missing = []
-    if fever_file is None:
-        missing.append("FEVER training file")
-    if liar_train is None:
-        missing.append("LIAR train.tsv")
-    if liar_valid is None:
-        missing.append("LIAR valid.tsv")
-    if liar_test is None:
-        missing.append("LIAR test.tsv")
-    if missing:
-        raise FileNotFoundError(
-            "Missing local dataset files: " + ", ".join(missing) +
-            ". Put the downloaded files inside the 'datasets' folder."
-        )
-
-    if fever_file.suffix.lower() == ".parquet":
-        fever_df = pd.read_parquet(fever_file)
-    else:
-        fever_df = pd.read_csv(fever_file)
-
-    fever_df["label"] = fever_df["label"].map({
-        "SUPPORTS": 0,
-        "REFUTES": 1,
-        "NOT ENOUGH INFO": 1,
-    })
-    fever_df = fever_df[["claim", "label"]].rename(columns={"claim": "text"})
-
-    liar_columns = [
-        "id", "label", "statement", "subject", "speaker", "job",
-        "state", "party", "barely_true", "false", "half_true",
-        "mostly_true", "pants_fire", "context"
-    ]
-
-    liar_frames = []
-    for file_path in [liar_train, liar_valid, liar_test]:
-        liar_frames.append(pd.read_csv(
-            file_path,
-            sep="\t",
-            header=None,
-            names=liar_columns
-        ))
-    liar_df = pd.concat(liar_frames, ignore_index=True)
-
-    liar_df["label"] = liar_df["label"].map({
-        "true": 0,
-        "mostly-true": 0,
-        "false": 1,
-        "pants-fire": 1,
-        "half-true": 1,
-        "barely-true": 1,
-    })
-    liar_df = liar_df[["statement", "label"]].rename(
-        columns={"statement": "text"}
-    )
-
-    data = pd.concat([fever_df, liar_df], ignore_index=True).dropna()
-    data["text"] = data["text"].apply(model_clean_text)
-    data = data[data["text"].str.len() > 0]
-    data = data.drop_duplicates(subset=["text"])
-    return data
-
-
-def train_local_model():
-    data = load_local_training_data()
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        data["text"],
-        data["label"],
-        test_size=0.20,
-        stratify=data["label"],
-        random_state=42
-    )
-
-    vectorizer = TfidfVectorizer(
-        ngram_range=(1, 2),
-        min_df=2,
-        max_df=0.98,
-        sublinear_tf=True,
-        max_features=250000
-    )
-
-    X_train_vec = vectorizer.fit_transform(X_train)
-    X_test_vec = vectorizer.transform(X_test)
-
-    model = LogisticRegression(
-        max_iter=2000,
-        class_weight="balanced",
-        C=2.0,
-        solver="liblinear",
-        random_state=42
-    )
-    model.fit(X_train_vec, y_train)
-
-    test_pred = model.predict(X_test_vec)
-    accuracy = accuracy_score(y_test, test_pred)
-
-    joblib.dump(vectorizer, "tfidf_vectorizer.pkl")
-    joblib.dump(model, "model (1).pkl")
-
-    return model, vectorizer, accuracy, len(data), y_test, test_pred
-
-
 # -----------------------------------------------------------------------------
 # VeriFact AI — refreshed interface (visual layout adapted from app (3).py)
-# Main application logic, training pipeline and PDF audit log remain based on
-# final code.py. The live web feeds below are displayed only as Sources/Timeline
-# context and never influence the trained-model verdict.
+# Main application based on final code.py, with the refreshed interface.
+# Live web feeds are used only for Sources/Timeline context, never for verdicts.
 # -----------------------------------------------------------------------------
 
 if 'verification_history' not in st.session_state:
@@ -820,7 +396,7 @@ with st.sidebar:
     st.divider()
     analysis_mode = st.radio(
         "Workspace",
-        ["📰 Text / Article Fact-Checker", "🤖 Trained Model Predictor", "🛠️ Train / Update Model", "📋 Verification History"],
+        ["📰 Text / Article Fact-Checker", "📋 Verification History"],
         index=0,
         key="analysis_mode_radio"
     )
@@ -836,11 +412,10 @@ with st.sidebar:
 st.markdown("<h1 style='margin-bottom:4px;'>VeriFact AI Command Center</h1>", unsafe_allow_html=True)
 st.markdown("<p style='color:#64748b;'>Trained-model claim analysis with separate live-source context and claim timeline</p>", unsafe_allow_html=True)
 
-
 def _predict_with_trained_model(text):
     """Return a model-only verdict. No live search or source data is consulted."""
     if trained_model is None or trained_vectorizer is None:
-        raise RuntimeError("The trained model could not be loaded. Add the model files beside this app or train a model below.")
+        raise RuntimeError("The trained model could not be loaded. Place the trained model and vectorizer files beside this app.")
     cleaned = model_clean_text(text)
     if not cleaned:
         raise ValueError("Please enter a longer claim or article text.")
@@ -881,7 +456,6 @@ def _predict_with_trained_model(text):
         )
     }
 
-
 def _timeline_from_articles(articles):
     parsed=[]
     from email.utils import parsedate_to_datetime
@@ -908,12 +482,10 @@ def _timeline_from_articles(articles):
         'latest_source': parsed[-1][1].get('source','Unknown')
     }, parsed
 
-
 def _make_reply(verdict, language='English'):
     if language == 'Hindi':
         return f"इस दावे की जाँच VeriFact AI के प्रशिक्षित मॉडल से की गई। मॉडल का परिणाम: {verdict}. कृपया इसे आगे साझा करने से पहले विश्वसनीय स्रोतों से भी जाँच लें।"
     return f"I checked this claim using VeriFact AI's trained model. Model result: {verdict}. Please verify it with reliable sources before forwarding it further."
-
 
 if analysis_mode == "📰 Text / Article Fact-Checker":
     st.markdown("### 📰 Check a claim")
@@ -977,12 +549,7 @@ if analysis_mode == "📰 Text / Article Fact-Checker":
         with c3:
             st.markdown(f"<div class='metric-box'><div class='metric-value'>{len(result['articles'])}</div><div class='metric-label'>Sources Found (separate)</div></div>",unsafe_allow_html=True)
 
-        tab1,tab2,tab3,tab4=st.tabs(["📲 WhatsApp Debunk Card","🟢 Live News & Sources","🕰️ Claim Timeline","💬 Forward-Back Reply"])
-        with tab1:
-            st.markdown("#### Shareable claim-check summary")
-            card=(f"*VeriFact AI Claim Check*\n\n*Claim:* {result['claim']}\n\n*Model verdict:* {result['verdict']}\n*Truth Index:* {result['truth_index']}%\n*Model confidence:* {result['confidence']*100:.1f}%\n\n_{result['summary']}_\n\n_Live source links are provided separately; they do not determine the model verdict._")
-            st.code(card, language="markdown")
-            st.link_button("📲 Open in WhatsApp", "https://wa.me/?text="+urllib.parse.quote(card), use_container_width=True)
+        tab2,tab3,tab4=st.tabs(["🟢 Live News & Sources","🕰️ Claim Timeline","💬 Forward-Back Reply"])
         with tab2:
             st.markdown("#### Live News & Source Authority")
             st.caption("These links are contextual references only. They do not change the trained-model result.")
@@ -1019,52 +586,11 @@ if analysis_mode == "📰 Text / Article Fact-Checker":
             st.text_area("Message:",value=reply,height=110,disabled=True)
             st.code(reply)
 
-elif analysis_mode == "🤖 Trained Model Predictor":
-    st.markdown("### 🤖 Trained Model Predictor")
-    st.caption("Direct model-only prediction. This mode does not perform live web searches.")
-    model_claim=st.text_area("Enter news text or a claim:",height=180,placeholder="Paste a claim or article here...",key="predictor_claim")
-    if trained_model is None or trained_vectorizer is None:
-        st.error("Model files were not loaded. Place `tfidf_vectorizer.pkl` and `model (1).pkl` (or `vectorizer.pkl` and `model (2).pkl`) beside the app, or train the model below.")
-        if model_load_error:
-            with st.expander("Model loading details"):
-                st.code(model_load_error)
-    if st.button("🤖 Predict",type="primary",use_container_width=True):
-        if not model_claim.strip():
-            st.warning("Please enter some text.")
-        else:
-            try:
-                prediction=_predict_with_trained_model(model_claim)
-                st.markdown(f"<div class='command-card'><span class='{prediction['css_class']}'>{prediction['verdict']}</span><h2 style='margin-top:15px;'>Truth Index: {prediction['truth_index']}%</h2><p>{prediction['summary']}</p></div>",unsafe_allow_html=True)
-                st.metric("Model confidence",f"{prediction['confidence']*100:.1f}%")
-            except Exception as exc:
-                st.error(str(exc))
-
-elif analysis_mode == "🛠️ Train / Update Model":
-    st.markdown("### 🛠️ Train / Update Fake-News Model")
-    st.markdown("Train the TF-IDF + Logistic Regression model using the local FEVER and LIAR datasets.")
-    st.info("Training uses local dataset files only; it does not fetch data from the web.")
-    st.code("datasets/\n├── fever_train.parquet\n├── liar_train.tsv\n├── liar_valid.tsv\n└── liar_test.tsv")
-    if st.button("🚀 Train / Update Model",type="primary",use_container_width=True):
-        try:
-            with st.spinner("Loading datasets and training the model..."):
-                new_model,new_vectorizer,accuracy,sample_count,y_test,test_pred=train_local_model()
-            trained_model=new_model; trained_vectorizer=new_vectorizer
-            st.success("Training completed. The model files have been saved.")
-            st.metric("Held-out test accuracy",f"{accuracy*100:.2f}%")
-            st.caption(f"Training samples after cleaning and deduplication: {sample_count}")
-            st.markdown("#### Classification report")
-            st.code(classification_report(y_test,test_pred,target_names=["REAL","FAKE"]))
-            st.code("tfidf_vectorizer.pkl\nmodel (1).pkl")
-        except Exception as exc:
-            st.error(f"Training failed: {exc}")
-
 elif analysis_mode == "📋 Verification History":
     st.markdown("### 📋 Verification History")
     history=st.session_state.verification_history
     if history:
         st.dataframe(pd.DataFrame(history),use_container_width=True,hide_index=True)
-        pdf_bytes=generate_verification_log_pdf(history)
-        st.download_button("📄 Download PDF Audit Log",data=pdf_bytes,file_name="VeriFact_AI_Audit_Log.pdf",mime="application/pdf",use_container_width=True)
         if st.button("Clear session history"):
             st.session_state.verification_history=[]
             st.rerun()
