@@ -14,12 +14,6 @@ try:
 except ImportError:
     HAS_DDG = False
 
-try:
-    from sentence_transformers import CrossEncoder
-    HAS_NLI = True
-except ImportError:
-    HAS_NLI = False
-
 st.set_page_config(
     page_title="VeriFact AI — Misinformation Command Center",
     page_icon="🛡️",
@@ -244,7 +238,6 @@ def extract_search_queries(text):
 
 LANGUAGE_OPTIONS = {
     'English': {'hl': 'en-IN', 'gl': 'IN', 'ceid': 'IN:en'},
-    'Hindi': {'hl': 'hi-IN', 'gl': 'IN', 'ceid': 'IN:hi'},
 }
 
 def fetch_google_news_rss(query, lang='English'):
@@ -487,9 +480,7 @@ def _timeline_from_articles(articles):
         'latest_source': parsed[-1][1].get('source','Unknown')
     }, parsed
 
-def _make_reply(verdict, language='English'):
-    if language == 'Hindi':
-        return f"इस दावे की जाँच VeriFact AI के प्रशिक्षित मॉडल से की गई। मॉडल का परिणाम: {verdict}. कृपया इसे आगे साझा करने से पहले विश्वसनीय स्रोतों से भी जाँच लें।"
+def _make_reply(verdict):
     return f"I checked this claim using VeriFact AI's trained model. Model result: {verdict}. Please verify it with reliable sources before forwarding it further."
 
 if analysis_mode == "📰 Text / Article Fact-Checker":
@@ -500,11 +491,6 @@ if analysis_mode == "📰 Text / Article Fact-Checker":
         height=150,
         placeholder="Paste a headline, claim, or article paragraph here...",
         key="claim_input"
-    )
-    search_lang = st.selectbox(
-        "Language for live source search:",
-        options=list(LANGUAGE_OPTIONS.keys()), index=0,
-        help="This setting affects only the Sources and Claim Timeline panels. It never changes the trained-model verdict."
     )
     if st.button("🔍 Analyze with Trained Model", type="primary", use_container_width=True):
         if not user_input.strip():
@@ -517,7 +503,7 @@ if analysis_mode == "📰 Text / Article Fact-Checker":
                 all_articles=[]
                 with st.spinner("Collecting live sources for the separate evidence panels..."):
                     for query in extract_search_queries(user_input):
-                        all_articles.extend(fetch_all_sources(query, lang=search_lang))
+                        all_articles.extend(fetch_all_sources(query, lang='English'))
                 seen=set(); unique_articles=[]
                 for article in all_articles:
                     key=(article.get('title',''), article.get('link',''))
@@ -586,8 +572,7 @@ if analysis_mode == "📰 Text / Article Fact-Checker":
                 st.info("No parseable publication dates were found in the live source results.")
         with tab4:
             st.markdown("#### A short reply to forward")
-            reply_lang=st.selectbox("Reply language:", ["English","Hindi"], key="reply_language")
-            reply=_make_reply(result['verdict'],reply_lang)
+            reply=_make_reply(result['verdict'])
             st.text_area("Message:",value=reply,height=110,disabled=True)
             st.code(reply)
 
