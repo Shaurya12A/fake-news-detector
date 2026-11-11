@@ -385,8 +385,14 @@ def model_clean_text(text):
 
 if 'verification_history' not in st.session_state:
     st.session_state.verification_history = []
-if 'test_claim' not in st.session_state:
-    st.session_state.test_claim = ''
+if 'claim_input' not in st.session_state:
+    st.session_state.claim_input = ''
+
+def _load_benchmark_claim(claim):
+    # Streamlit reruns the script after a button click; update the keyed widget
+    # state so the selected benchmark appears in the claim text area.
+    st.session_state.claim_input = claim
+    st.session_state.last_result = None
 if 'last_result' not in st.session_state:
     st.session_state.last_result = None
 
@@ -403,14 +409,13 @@ with st.sidebar:
     st.divider()
     st.markdown("### ⚡ Test Claim Benchmarks")
     if st.button("🔴 Fake: Plastic Currency Rumor", use_container_width=True):
-        st.session_state.test_claim = "The Reserve Bank of India has announced that all paper currency notes will be replaced with plastic bank notes next month."
+        _load_benchmark_claim("The Reserve Bank of India has announced that all paper currency notes will be replaced with plastic bank notes next month.")
     if st.button("🟢 Real: ISRO Gaganyaan Engine", use_container_width=True):
-        st.session_state.test_claim = "ISRO successfully completed core stage engine testing for the Gaganyaan human spaceflight mission."
+        _load_benchmark_claim("ISRO successfully completed core stage engine testing for the Gaganyaan human spaceflight mission.")
     if st.button("🚨 Clickbait: 5G Scalar Waves", use_container_width=True):
-        st.session_state.test_claim = "BREAKING URGENT: Secret government plot leaked as 5G cell towers emit scalar frequencies!"
+        _load_benchmark_claim("BREAKING URGENT: Secret government plot leaked as 5G cell towers emit scalar frequencies!")
 
 st.markdown("<h1 style='margin-bottom:4px;'>VeriFact AI Command Center</h1>", unsafe_allow_html=True)
-st.markdown("<p style='color:#64748b;'>Trained-model claim analysis with separate live-source context and claim timeline</p>", unsafe_allow_html=True)
 
 def _predict_with_trained_model(text):
     """Return a model-only verdict. No live search or source data is consulted."""
@@ -491,7 +496,7 @@ if analysis_mode == "📰 Text / Article Fact-Checker":
     st.markdown("### 📰 Check a claim")
     user_input = st.text_area(
         "Enter a news claim, article paragraph, or viral post:",
-        value=st.session_state.get('test_claim',''),
+        value=st.session_state.get('claim_input',''),
         height=150,
         placeholder="Paste a headline, claim, or article paragraph here...",
         key="claim_input"
